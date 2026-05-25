@@ -83,8 +83,8 @@ void pwmWrite(uint8_t pin, uint8_t channel, uint32_t value) {
 // ============================================================================
 #define MAX_LUX                50000.0  // Will be loaded from preprocessing.json
 #define LEARNING_SAMPLES       50       // Retrain after this many samples
-#define SAMPLE_INTERVAL        10000    // Sample every 10 seconds (ms)
-#define ADJUSTMENT_THRESHOLD   5.0      // Min adjustment to trigger learning (%)
+#define SAMPLE_INTERVAL        1000     // Sample every 1 second (ms) - changed from 10s
+#define ADJUSTMENT_THRESHOLD   5.0      // Min adjustment CHANGE to trigger learning (%)
 
 // ============================================================================
 // GLOBAL VARIABLES
@@ -120,7 +120,10 @@ int sampleCount = 0;
 unsigned long lastSampleTime = 0;
 float lastDTPrediction = 0.0;
 float lastPotAdjustment = 0.0;
+float previousPotAdjustment = 0.0;  // Track previous pot value to detect CHANGES
 float currentBrightness = 0.0;
+float serialAdjustment = 0.0;  // Manual adjustment from serial input
+bool useSerialAdjustment = false;  // Flag to use serial instead of pot
 
 // ============================================================================
 // HELPER: Print a separator line (replaces invalid String('=', 80))
@@ -139,6 +142,8 @@ void   saveLearningData();
 void   retrainModel();
 float  readLux();
 float  readPotAdjustment();
+void   handleSerialInput();
+void   printHelp();
 String getTimeOfDay(int hour);
 int    getTimeEncoding(const String& timeOfDay);
 void   setLEDBrightness(float percent);
@@ -205,10 +210,92 @@ void setup() {
     Serial.println();
     Serial.println("[3] System Ready!");
     Serial.println("  - Automatic brightness control: ENABLED");
-    Serial.println("  - Manual adjustment: ENABLED (potentiometer)");
+    Serial.println("  - Manual adjustment: ENABLED (potentiometer + serial)");
     Serial.println("  - Online learning: ENABLED");
+    Serial.println();
+    printHelp();
     printSeparator('=', 80);
     Serial.println();
+}
+
+// ============================================================================
+// SERIAL INPUT HANDLER (for manual brightness control)
+// ============================================================================
+
+void handleSerialInput() {
+    String input = Serial.readStringUntil('\n');
+    input.trim();
+    input.toLowerCase();
+    
+    if (input.length() == 0) return;
+    
+    // Check for numeric input (-50 to +50)
+    if (input.startsWith("+") || input.startsWith("-") || isdigit(input.charAt(0))) {
+        float value = input.toFloat();
+        if (value >= -50.0 && value <= 50.0) {
+            serialAdjustment = value;
+            useSerialAdjustment = true;
+            Serial.printf("Manual adjustment set to: %+.1f%% (via serial)\n", serialAdjustment);
+            Serial.println("This will be added to DT prediction.");
+        } else {
+            Serial.println("ERROR: Value must be between -50 and +50");
+        }
+    }
+    // Commands
+    else if (input == "pot" || input == "potentiometer") {
+        useSerialAdjustment = false;
+        Serial.println("Switched to POTENTIOMETER mode");
+    }
+    else if (input == "auto" || input == "ml") {
+        serialAdjustment = 0.0;
+        useSerialAdjustment = true;
+        Serial.println("AUTO mode: Pure ML control (adjustment = 0%)");
+    }
+    else if (input == "status" || input == "info") {
+        Serial.println("\n=== CURRENT STATUS ===");
+        Serial.printf("DT Prediction:      %.1f%%\n", lastDTPrediction);
+        Serial.printf("Pot Adjustment:     %+.1f%%\n", lastPotAdjustment);
+        Serial.printf("Serial Adjustment:  %+.1f%%\n", serialAdjustment);
+        Serial.printf("Active Mode:        %s\n", useSerialAdjustment ? "SERIAL" : "POTENTIOMETER");
+        Serial.printf("Final Brightness:   %.1f%%\n", currentBrightness);
+        Serial.printf("Samples Collected:  %d / %d\n", sampleCount, LEARNING_SAMPLES);
+        Serial.println("======================\n");
+    }
+    else if (input == "help" || input == "?") {
+        printHelp();
+    }
+    else if (input == "reset") {
+        serialAdjustment = 0.0;
+        useSerialAdjustment = true;
+        Serial.println("Serial adjustment reset to 0%");
+    }
+    else {
+        Serial.println("Unknown command. Type 'help' for commands.");
+    }
+}
+
+void printHelp() {
+    Serial.println("\n=== MANUAL CONTROL COMMANDS ===");
+    Serial.println("Brightness Adjustment:");
+    Serial.println("  +20      : Add +20% to DT prediction");
+    Serial.println("  -15      : Subtract 15% from DT prediction");
+    Serial.println("  0        : Use pure DT prediction (no adjustment)");
+    Serial.println("  (Range: -50 to +50)");
+    Serial.println();
+    Serial.println("Mode Selection:");
+    Serial.println("  pot      : Switch to potentiometer control");
+    Serial.println("  auto     : Pure ML mode (no adjustment)");
+    Serial.println("  reset    : Reset serial adjustment to 0%");
+    Serial.println();
+    Serial.println("Information:");
+    Serial.println("  status   : Show current values");
+    Serial.println("  help     : Show this help");
+    Serial.println();
+    Serial.println("Examples:");
+    Serial.println("  Type '+10' to add 10% brightness");
+    Serial.println("  Type '-20' to reduce 20% brightness");
+    Serial.println("  Type 'pot' to use physical knob");
+    Serial.println("================================\n");
 }
 
 // ============================================================================
@@ -216,6 +303,11 @@ void setup() {
 // ============================================================================
 void loop() {
     unsigned long currentTime = millis();
+    
+    // Check for serial input commands
+    if (Serial.available()) {
+        handleSerialInput();
+    }
 
     if (currentTime - lastSampleTime >= SAMPLE_INTERVAL) {
         lastSampleTime = currentTime;
@@ -252,27 +344,70 @@ void loop() {
         // ---- ML inference ----
         float dtBrightness = predictBrightness(lux_norm, motion, hour_sin,
                                                hour_cos, time_enc, effective_need);
+        
+        // RULE-BASED OVERRIDE: Cap brightness in bright conditions
+        // This fixes the issue where model predicts high values in bright light
+        if (lux > 2000.0f && motion == 1) {
+            float cappedValue = 20.0f;  // Max 20% when bright + motion
+            if (dtBrightness > cappedValue) {
+                Serial.printf("  [Override] Bright condition (%.0f lux) - capping %.1f%% -> %.1f%%\n", 
+                              lux, dtBrightness, cappedValue);
+                dtBrightness = cappedValue;
+            }
+        }
+        if (lux > 5000.0f) {
+            float cappedValue = 10.0f;  // Max 10% when very bright
+            if (dtBrightness > cappedValue) {
+                Serial.printf("  [Override] Very bright (%.0f lux) - capping %.1f%% -> %.1f%%\n", 
+                              lux, dtBrightness, cappedValue);
+                dtBrightness = cappedValue;
+            }
+        }
+        if (lux < 100.0f && motion == 0) {
+            float cappedValue = 10.0f;  // Max 10% when dark + no motion
+            if (dtBrightness > cappedValue) {
+                Serial.printf("  [Override] Dark + no motion - capping %.1f%% -> %.1f%%\n", 
+                              dtBrightness, cappedValue);
+                dtBrightness = cappedValue;
+            }
+        }
+        
         lastDTPrediction = dtBrightness;
 
-        // ---- Manual adjustment from potentiometer ----
-        float potAdjustment = readPotAdjustment();
-        lastPotAdjustment = potAdjustment;
+        // ---- Manual adjustment (potentiometer OR serial) ----
+        float currentAdjustment;
+        const char* adjustmentSource;
+        
+        if (useSerialAdjustment) {
+            // Use serial input
+            currentAdjustment = serialAdjustment;
+            adjustmentSource = "Serial";
+            lastPotAdjustment = currentAdjustment;  // Update for display
+        } else {
+            // Use potentiometer
+            currentAdjustment = readPotAdjustment();
+            lastPotAdjustment = currentAdjustment;
+            adjustmentSource = "Pot";
+        }
 
         // ---- Final brightness ----
-        float finalBrightness = dtBrightness + potAdjustment;
+        float finalBrightness = dtBrightness + currentAdjustment;
         if (finalBrightness < 0.0f)   finalBrightness = 0.0f;
         if (finalBrightness > 100.0f) finalBrightness = 100.0f;
         currentBrightness = finalBrightness;
 
         setLEDBrightness(finalBrightness);
 
-        Serial.printf("[%02d:%02d:%02d] Lux: %6.0f | Motion: %d | DT: %5.1f%% | Pot: %+5.1f%% | Final: %5.1f%%\n",
+        Serial.printf("[%02d:%02d:%02d] Lux: %6.0f | Motion: %d | DT: %5.1f%% | %s: %+5.1f%% | Final: %5.1f%%\n",
                       hour, minute, second, lux, motion,
-                      dtBrightness, potAdjustment, finalBrightness);
+                      dtBrightness, adjustmentSource, currentAdjustment, finalBrightness);
 
         // ---- Online learning trigger ----
-        if (fabs(potAdjustment) > ADJUSTMENT_THRESHOLD) {
-            Serial.println("  -> User adjustment detected. Collecting training sample...");
+        // FIXED: Only trigger when adjustment CHANGES by >5%, not when it's just >5%
+        float adjustmentChange = fabs(currentAdjustment - previousPotAdjustment);
+        
+        if (adjustmentChange > ADJUSTMENT_THRESHOLD) {
+            Serial.printf("  -> User adjustment CHANGED by %.1f%%. Collecting training sample...\n", adjustmentChange);
 
             if (sampleCount < MAX_SAMPLES) {
                 DataSample& s = learningBuffer[sampleCount++];
@@ -283,6 +418,9 @@ void loop() {
                 s.time_of_day_enc   = time_enc;
                 s.effective_need    = effective_need;
                 s.target_brightness = finalBrightness;
+                
+                Serial.printf("     Sample %d/%d collected (target brightness: %.1f%%)\n", 
+                             sampleCount, LEARNING_SAMPLES, finalBrightness);
             }
 
             if (sampleCount >= LEARNING_SAMPLES) {
@@ -292,6 +430,9 @@ void loop() {
                 saveLearningData();
                 sampleCount = 0;
             }
+            
+            // Update previous value AFTER learning trigger
+            previousPotAdjustment = currentAdjustment;
         }
     }
 
