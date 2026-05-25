@@ -303,21 +303,43 @@ void loop() {
 // ============================================================================
 
 float readLux() {
-    int raw = analogRead(LDR_PIN);
+    // Average multiple samples for stability
+    const int SAMPLES = 20;
+    long sum = 0;
+    for (int i = 0; i < SAMPLES; i++) {
+        sum += analogRead(LDR_PIN);
+        delay(2);
+    }
+    int raw = sum / SAMPLES;
+    
     if (raw <= 0) raw = 1;  // avoid div-by-zero
 
-    float voltage = raw * (3.3f / 4095.0f);
+    // Convert ADC reading to voltage
+    float voltage = (raw / 4095.0f) * 3.3f;
     if (voltage <= 0.01f) voltage = 0.01f;
+    if (voltage >= 3.29f) voltage = 3.29f;
 
-    // Voltage divider: 3.3V -- 10K -- LDR -- GND ; LDR center on ADC pin
-    float resistance = (3.3f - voltage) * 10000.0f / voltage;
-    if (resistance <= 0.0f) resistance = 1.0f;
+    // Calculate LDR resistance using voltage divider formula
+    // Voltage divider: 3.3V -- LDR -- ADC_PIN -- 10K -- GND
+    // Formula: V_adc = V_cc * R_fixed / (R_ldr + R_fixed)
+    // Rearranged: R_ldr = R_fixed * V_adc / (V_cc - V_adc)
+    const float R_FIXED = 10000.0f;   // 10K pull-down resistor
+    const float V_CC = 3.3f;
+    
+    float r_ldr = R_FIXED * voltage / (V_CC - voltage);
+    if (r_ldr <= 0.0f) r_ldr = 1.0f;
 
-    // GL5528-like LDR characteristic curve (calibrate for your sensor)
-    float lux = pow(10.0f, (log10(resistance / 1000.0f) - 1.5f) / -0.7f);
+    // Convert resistance to lux using calibrated formula
+    // Formula derived from GL5528 datasheet: Lux = A * R^B
+    const float LDR_A = 32768000.0f;  // Calibration constant A
+    const float LDR_B = -1.4f;        // Calibration exponent B
+    
+    float lux = LDR_A * pow(r_ldr, LDR_B);
 
+    // Clamp to valid range
     if (lux < 0.0f)    lux = 0.0f;
     if (lux > maxLux)  lux = maxLux;
+    
     return lux;
 }
 
