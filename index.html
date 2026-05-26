@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Net Worth Tracker</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <main class="container">
+    <header>
+      <h1>Personal Net Worth Dashboard</h1>
+      <p>Track investments, liabilities, and total net worth in one place.</p>
+    </header>
+
+    <section class="card app-link-card">
+      <h2>Web Application Link</h2>
+      <p>Use this local URL to open the dashboard in your browser:</p>
+      <div class="app-link-row">
+        <a id="appLink" href="#" target="_blank" rel="noopener noreferrer">Loading...</a>
+        <button id="copyLinkBtn" type="button">Copy Link</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Total Investments</h2>
+      <div class="grid">
+        <label>Individual Stocks
+          <input type="number" min="0" step="0.01" id="stocks" value="0" />
+        </label>
+        <label>Individual Mutual Funds
+          <input type="number" min="0" step="0.01" id="mutualFunds" value="0" />
+        </label>
+        <label>Gold
+          <input type="number" min="0" step="0.01" id="gold" value="0" />
+        </label>
+        <label>Silver
+          <input type="number" min="0" step="0.01" id="silver" value="0" />
+        </label>
+        <label>Crypto
+          <input type="number" min="0" step="0.01" id="crypto" value="0" />
+        </label>
+        <label>Foreign US Investment
+          <input type="number" min="0" step="0.01" id="foreignUs" value="0" />
+        </label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Total Liabilities</h2>
+      <div class="grid">
+        <label>Car Loan
+          <input type="number" min="0" step="0.01" id="carLoan" value="0" />
+        </label>
+        <label>Home Loan
+          <input type="number" min="0" step="0.01" id="homeLoan" value="0" />
+        </label>
+        <label>Other EMIs
+          <input type="number" min="0" step="0.01" id="otherEmis" value="0" />
+        </label>
+      </div>
+    </section>
+
+    <section class="card totals">
+      <div class="summary-header">
+        <h2>Summary</h2>
+        <button id="resetBtn" type="button">Reset All Values</button>
+      </div>
+      <div class="summary-grid">
+        <article>
+          <h3>Total Investment</h3>
+          <p id="totalInvestment">₹0.00</p>
+        </article>
+        <article>
+          <h3>Total Liabilities</h3>
+          <p id="totalLiabilities">₹0.00</p>
+        </article>
+        <article>
+          <h3>Total Net Worth</h3>
+          <p id="totalNetWorth">₹0.00</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="chart-header">
+        <h2>Graphical View</h2>
+        <div class="selectors">
+          <label for="graphView">Graph Dataset</label>
+          <select id="graphView">
+            <option value="investmentBreakdown">Investment Breakdown</option>
+            <option value="liabilityBreakdown">Liability Breakdown</option>
+            <option value="networthComparison">Investment vs Liabilities vs Net Worth</option>
+          </select>
+          <label for="graphType">Graph Type</label>
+          <select id="graphType">
+            <option value="pie">Pie</option>
+            <option value="doughnut">Doughnut</option>
+            <option value="bar">Bar</option>
+            <option value="line">Line</option>
+          </select>
+        </div>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="networthChart"></canvas>
+      </div>
+    </section>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
